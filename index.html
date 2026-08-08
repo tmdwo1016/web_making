@@ -44,24 +44,39 @@
   .app-shell{
     max-width:480px;
     margin:0 auto;
-    min-height:100vh;
-    background:var(--rice);
+    height:100vh;
+    height:100dvh;
+    background:var(--nori);
     position:relative;
     box-shadow:0 0 60px rgba(0,0,0,0.35);
     overflow:hidden;
   }
 
-  /* ===================== 공통 스크린 ===================== */
+  /* ===================== 공통 스크린 =====================
+     화면마다 절대위치로 겹쳐놓고, active 여부에 따라
+     투명도/이동값만 바꿔 "전환"되는 것처럼 보이게 합니다.
+     (페이지 자체는 스크롤되지 않고, 각 화면 내부만 스크롤됨) */
   .screen{
-    display:none;
-    min-height:100vh;
+    position:absolute;
+    inset:0;
     padding:0 0 40px;
-    animation:screenIn .5s ease;
+    background:var(--rice);
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    opacity:0;
+    transform:translateX(28px) scale(0.99);
+    transition:opacity .38s cubic-bezier(.22,.8,.3,1), transform .38s cubic-bezier(.22,.8,.3,1);
+    pointer-events:none;
+    z-index:1;
   }
-  .screen.active{display:block;}
-  @keyframes screenIn{
-    from{opacity:0; transform:translateY(14px);}
-    to{opacity:1; transform:translateY(0);}
+  .screen.active{
+    opacity:1;
+    transform:translateX(0) scale(1);
+    pointer-events:auto;
+    z-index:2;
+  }
+  .screen.exit{
+    transform:translateX(-28px) scale(0.99);
   }
 
   .topbar{
@@ -97,6 +112,34 @@
     padding:0;
     position:relative;
   }
+
+  /* ---- FloatingFoodHero 이식: 배경 스월 장식 ---- */
+  .hero-swirls{position:absolute; inset:0; z-index:0; overflow:hidden; pointer-events:none;}
+  .hero-swirls svg{position:absolute; opacity:.16;}
+  .hero-swirls svg.s1{top:-140px; left:-160px;}
+  .hero-swirls svg.s2{bottom:-180px; right:-160px;}
+
+  /* ---- FloatingFoodHero 이식: 떠다니는 재료 레이어 ---- */
+  .floating-layer{position:absolute; inset:0; z-index:1; pointer-events:none;}
+  .float-item{
+    position:absolute; font-size:34px; filter:drop-shadow(0 10px 14px rgba(0,0,0,0.35));
+    animation:foodFloat 5.5s ease-in-out infinite;
+    opacity:0; animation-fill-mode:forwards;
+  }
+  .float-item.appear{animation:foodFloat 5.5s ease-in-out infinite, floatAppear .7s ease forwards;}
+  @keyframes foodFloat{
+    0%,100%{transform:translateY(0) rotate(-4deg);}
+    50%{transform:translateY(-16px) rotate(4deg);}
+  }
+  @keyframes floatAppear{
+    from{opacity:0; transform:scale(.6) translateY(10px);}
+    to{opacity:1;}
+  }
+  .float-item.f1{top:8%;  left:8%;  font-size:30px;}
+  .float-item.f2{top:6%;  right:9%; font-size:26px; animation-delay:.6s;}
+  .float-item.f3{top:34%; right:5%; font-size:22px; animation-delay:1.1s;}
+  .float-item.f4{top:46%; left:6%;  font-size:20px; animation-delay:1.6s;}
+  .float-item.f5{top:22%; left:50%; font-size:16px; animation-delay:2.1s;}
   .intro-top{
     padding:52px 28px 0;
     position:relative; z-index:2;
@@ -417,6 +460,22 @@
 
   <!-- ============ 화면 1: 인트로 ============ -->
   <section class="screen active" id="screen-intro">
+
+    <!-- 21st.dev FloatingFoodHero 이식: 배경 스월 -->
+    <div class="hero-swirls" aria-hidden="true">
+      <svg class="s1" width="420" height="420" viewBox="0 0 600 600" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M515.266 181.33C377.943 51.564 128.537 136.256 50.8123 293.565C-26.9127 450.874 125.728 600 125.728 600"
+              stroke="#E7A73B" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <svg class="s2" width="480" height="480" viewBox="0 0 700 700" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M26.8838 528.274C193.934 689.816 480.051 637.218 594.397 451.983C708.742 266.748 543.953 2.22235 543.953 2.22235"
+              stroke="#4B7A5C" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+
+    <!-- 21st.dev FloatingFoodHero 이식: 떠다니는 재료 이모지 레이어 (JS에서 채움) -->
+    <div class="floating-layer" id="floatingLayer" aria-hidden="true"></div>
+
     <div class="intro-top">
       <div class="intro-eyebrow">오늘의 도시락</div>
       <h1 class="intro-headline">지금 있는 재료로,<br><em>누군가에게</em> 맛보여주고<br>싶은 한 끼</h1>
@@ -432,7 +491,7 @@
     </div>
 
     <div class="intro-bottom">
-      <button class="btn-primary" onclick="goToScreen('input')">재료로 시작하기</button>
+      <button class="btn-primary" onclick="goToScreen('input')">재료 선택하기</button>
       <div class="intro-hint">사진 한 장, 또는 재료 이름 하나면 충분해요</div>
     </div>
   </section>
@@ -463,10 +522,12 @@
     <div class="tab-panel" id="tabText">
       <div class="section-pad" style="padding-left:0; padding-right:0;">
         <div class="ingredient-input-row">
-          <input type="text" id="ingredientText" placeholder="예) 애호박, 계란, 어묵…" onkeydown="if(event.key==='Enter'){addTypedIngredient();}">
-          <button class="add-btn" onclick="addTypedIngredient()">+</button>
+          <input type="text" id="ingredientText" placeholder="재료 이름으로 검색 (예: 애호박, 닭, 두부…)"
+                 oninput="renderIngredientResults(this.value)"
+                 onkeydown="if(event.key==='Enter'){handleEnterAdd();}">
+          <button class="add-btn" onclick="handleEnterAdd()">+</button>
         </div>
-        <div class="quick-label">자주 쓰는 재료</div>
+        <div class="quick-label" id="resultsLabel">자주 쓰는 재료</div>
         <div class="quick-chips" id="quickChips"></div>
       </div>
     </div>
@@ -557,6 +618,19 @@
    조리식품 레시피 DB 등) 응답으로 교체하는 지점입니다.
    ========================================================= */
 
+/* 검색 가능한 재료 전체 목록 (실제 서비스에서는 식품영양성분 DB 등으로 교체) */
+const INGREDIENT_DB = [
+  '계란','애호박','당근','어묵','두부','시금치','양파','소시지','브로콜리','현미밥','닭가슴살','김',
+  '감자','고구마','양배추','파프리카','청경채','콩나물','숙주','버섯','표고버섯','느타리버섯','가지',
+  '오이','토마토','방울토마토','대파','부추','마늘','생강','깻잎','상추','무',
+  '돼지고기','소고기','다진고기','베이컨','햄','참치캔','메추리알','오징어','새우','연어','명란',
+  '백미밥','잡곡밥','파스타면','스파게티','식빵','또띠아','우동면',
+  '우유','치즈','요거트','버터',
+  '미역','다시마','건새우',
+  '견과류','아몬드','블루베리','바나나','사과','단호박'
+];
+
+/* 인트로/초기 화면에서 우선 보여줄 인기 재료 */
 const QUICK_INGREDIENTS = ['계란','애호박','당근','어묵','두부','시금치','양파','소시지','브로콜리','현미밥','닭가슴살','김'];
 
 const NUTRI_INFO = {
@@ -640,8 +714,33 @@ const RECIPES = [
 const TARGETS = ['전체','직장인','헬스인','자녀도시락','이유식'];
 
 /* =========================================================
-   상태
+   21st.dev FloatingFoodHero 이식
+   원본은 React에서 images.map()으로 <img> 배열을 렌더링했지만,
+   여기서는 순수 JS로 동일한 패턴을 구현합니다.
    ========================================================= */
+const FLOAT_ITEMS = [
+  {emoji:'🍚', cls:'f1'},
+  {emoji:'🥚', cls:'f2'},
+  {emoji:'🥦', cls:'f3'},
+  {emoji:'🍤', cls:'f4'},
+  {emoji:'🥕', cls:'f5'}
+];
+
+function renderFloatingLayer(){
+  const wrap = document.getElementById('floatingLayer');
+  if(!wrap) return;
+  wrap.innerHTML = '';
+  FLOAT_ITEMS.forEach((item, i) => {
+    const el = document.createElement('div');
+    el.className = `float-item ${item.cls}`;
+    el.textContent = item.emoji;
+    wrap.appendChild(el);
+    setTimeout(() => el.classList.add('appear'), i * 220);
+  });
+}
+renderFloatingLayer();
+
+
 let pickedIngredients = [];
 let currentTarget = '전체';
 let currentRecipeId = null;
@@ -650,9 +749,24 @@ let currentRecipeId = null;
    화면 전환
    ========================================================= */
 function goToScreen(name){
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById('screen-' + name).classList.add('active');
-  window.scrollTo({top:0, behavior:'instant'});
+  const current = document.querySelector('.screen.active');
+  const next = document.getElementById('screen-' + name);
+  if(current === next) return;
+
+  if(current){
+    current.classList.add('exit');
+    current.classList.remove('active');
+  }
+  next.scrollTop = 0;
+  next.classList.remove('exit');
+  // 리플로우를 강제해 transition이 확실히 재생되도록 함
+  void next.offsetWidth;
+  next.classList.add('active');
+
+  if(current){
+    setTimeout(() => current.classList.remove('exit'), 400);
+  }
+
   if(name === 'intro'){
     const tray = document.getElementById('introTray');
     tray.classList.remove('filled');
@@ -675,37 +789,65 @@ function switchTab(tab){
   document.getElementById('tabText').classList.toggle('active', tab==='text');
 }
 
-/* 빠른 재료 칩 렌더 */
-function renderQuickChips(){
+/* 검색어에 따라 재료 결과 렌더링. 검색어가 없으면 인기 재료를 보여줌 */
+function renderIngredientResults(query){
   const wrap = document.getElementById('quickChips');
+  const label = document.getElementById('resultsLabel');
+  const q = query.trim();
   wrap.innerHTML = '';
-  QUICK_INGREDIENTS.forEach(name => {
-    const chip = document.createElement('div');
-    chip.className = 'quick-chip';
-    chip.textContent = name;
-    chip.onclick = () => addIngredient(name);
-    wrap.appendChild(chip);
-  });
-}
-renderQuickChips();
 
-function addTypedIngredient(){
+  if(!q){
+    label.textContent = '자주 쓰는 재료';
+    QUICK_INGREDIENTS.forEach(name => wrap.appendChild(makeIngredientChip(name)));
+    return;
+  }
+
+  const matches = INGREDIENT_DB.filter(name => name.includes(q) && !pickedIngredients.includes(name));
+  label.textContent = matches.length ? `검색 결과 ${matches.length}건` : '검색 결과가 없어요';
+  matches.slice(0, 24).forEach(name => wrap.appendChild(makeIngredientChip(name)));
+
+  /* DB에 없는 재료라도 직접 추가할 수 있도록 안내 칩 제공 */
+  if(!INGREDIENT_DB.includes(q) && !pickedIngredients.includes(q)){
+    const custom = document.createElement('div');
+    custom.className = 'quick-chip';
+    custom.style.borderColor = 'var(--scallion)';
+    custom.style.color = 'var(--scallion-deep)';
+    custom.textContent = `“${q}” 새 재료로 담기`;
+    custom.onclick = () => { addIngredient(q); document.getElementById('ingredientText').value=''; renderIngredientResults(''); };
+    wrap.appendChild(custom);
+  }
+}
+
+function makeIngredientChip(name){
+  const chip = document.createElement('div');
+  chip.className = 'quick-chip';
+  chip.textContent = name;
+  chip.onclick = () => addIngredient(name);
+  return chip;
+}
+
+function handleEnterAdd(){
   const input = document.getElementById('ingredientText');
   const val = input.value.trim();
   if(!val) return;
   addIngredient(val);
   input.value = '';
+  renderIngredientResults('');
 }
+
+renderIngredientResults('');
 
 function addIngredient(name){
   if(pickedIngredients.includes(name)) return;
   pickedIngredients.push(name);
   renderPicked();
+  renderIngredientResults(document.getElementById('ingredientText').value);
 }
 
 function removeIngredient(name){
   pickedIngredients = pickedIngredients.filter(n => n !== name);
   renderPicked();
+  renderIngredientResults(document.getElementById('ingredientText').value);
 }
 
 function renderPicked(){
