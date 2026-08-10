@@ -278,6 +278,37 @@
     0%,100%{opacity:.3;} 50%{opacity:1;}
   }
 
+  /* ---- 인식 결과 확인(프리뷰) 영역 ---- */
+  .recognize-preview{
+    display:none;
+    margin-top:14px; padding:16px; border-radius:var(--radius-md);
+    background:var(--white); box-shadow:var(--shadow-soft);
+  }
+  .recognize-preview .rp-title{
+    font-size:13px; font-weight:700; color:var(--nori); margin-bottom:4px;
+  }
+  .recognize-preview .rp-sub{
+    font-size:12px; color:var(--nori-soft); margin-bottom:12px; line-height:1.5;
+  }
+  .rp-chips{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;}
+  .rp-chip{
+    display:flex; align-items:center; gap:6px;
+    padding:9px 14px; border-radius:100px; font-size:13px; font-weight:600;
+    background:#EEF4EE; border:1.5px solid var(--scallion); color:var(--scallion-deep);
+    cursor:pointer; user-select:none; transition:all .15s ease;
+  }
+  .rp-chip .mark{font-size:12px;}
+  .rp-chip.off{
+    background:var(--rice-deep); border-color:var(--tray-line); color:#A8A08C;
+    text-decoration:line-through;
+  }
+  .rp-actions{display:flex; gap:8px;}
+  .rp-actions .btn-primary{padding:13px 16px; font-size:14px;}
+  .rp-actions .btn-secondary{
+    flex-shrink:0; padding:13px 16px; border-radius:100px; border:1px solid var(--tray-line);
+    background:var(--white); color:var(--nori-soft); font-size:14px; font-weight:700; cursor:pointer;
+  }
+
   .ingredient-input-row{
     display:flex; gap:8px; margin-bottom:14px;
   }
@@ -513,10 +544,20 @@
       <div class="photo-drop" id="photoDrop">
         <div class="icon">📷</div>
         <p>냉장고나 식재료 사진을 올려주세요<br>재료를 자동으로 인식해드릴게요</p>
-        <input type="file" accept="image/*" id="photoInput">
+        <input type="file" accept="image/*" capture="environment" id="photoInput">
       </div>
       <div class="photo-preview" id="photoPreview"><img id="photoPreviewImg" alt="업로드한 재료 사진"></div>
       <div class="scan-status" id="scanStatus"><div class="scan-dot"></div><span id="scanStatusText">재료를 인식하는 중이에요…</span></div>
+
+      <div class="recognize-preview" id="recognizePreview">
+        <div class="rp-title">이렇게 인식했어요</div>
+        <div class="rp-sub">틀린 재료는 탭해서 빼주세요. 확인한 재료만 담아드릴게요.</div>
+        <div class="rp-chips" id="rpChips"></div>
+        <div class="rp-actions">
+          <button class="btn-secondary" onclick="cancelRecognizePreview()">다시 찍기</button>
+          <button class="btn-primary dark" style="flex:1;" id="rpConfirmBtn" onclick="confirmRecognizePreview()">선택한 재료 담기</button>
+        </div>
+      </div>
     </div>
 
     <div class="tab-panel" id="tabText">
@@ -867,28 +908,159 @@ function renderPicked(){
   document.getElementById('analyzeBtn').disabled = pickedIngredients.length === 0;
 }
 
-/* 사진 업로드 → (목업) 재료 인식 */
+/* 사진 업로드 → 실제 이미지 인식(Claude Vision API) */
 document.getElementById('photoInput').addEventListener('change', function(e){
   const file = e.target.files[0];
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = function(ev){
-    document.getElementById('photoPreviewImg').src = ev.target.result;
+  reader.onload = async function(ev){
+    const dataUrl = ev.target.result; // "data:image/jpeg;base64,...."
+    document.getElementById('photoPreviewImg').src = dataUrl;
     document.getElementById('photoPreview').style.display = 'block';
-    const status = document.getElementById('scanStatus');
-    status.style.display = 'flex';
-    document.getElementById('scanStatusText').textContent = '재료를 인식하는 중이에요…';
 
-    /* 실제 서비스에서는 이 지점에서 이미지 인식 API를 호출합니다.
-       지금은 데모로 임의의 재료 3~4개를 자동으로 인식한 것처럼 보여줍니다. */
-    setTimeout(() => {
-      const sample = QUICK_INGREDIENTS.sort(()=>0.5-Math.random()).slice(0,4);
-      sample.forEach(addIngredient);
-      document.getElementById('scanStatusText').textContent = `${sample.length}가지 재료를 인식했어요: ${sample.join(', ')}`;
-    }, 1400);
+    const status = document.getElementById('scanStatus');
+    const statusText = document.getElementById('scanStatusText');
+    status.style.display = 'flex';
+    statusText.style.color = 'var(--scallion-deep)';
+    statusText.textContent = '재료를 인식하는 중이에요…';
+
+    try{
+      const recognized = await recognizeIngredientsFromImage(dataUrl, file.type || 'image/jpeg');
+
+      if(!recognized.length){
+        status.style.display = 'none';
+        statusText.style.color = 'var(--gochu)';
+        statusText.textContent = '재료를 찾지 못했어요. 더 밝고 가까운 사진으로 다시 시도해보세요.';
+        status.style.display = 'flex';
+        return;
+      }
+
+      status.style.display = 'none';
+      showRecognizePreview(recognized);
+    }catch(err){
+      console.error('재료 인식 실패:', err);
+      statusText.style.color = 'var(--gochu)';
+      statusText.textContent = '재료 인식에 실패했어요. 잠시 후 다시 시도하거나 직접 입력해주세요.';
+    }
   };
   reader.readAsDataURL(file);
 });
+
+/* =========================================================
+   인식 결과 확인(프리뷰) — 자동으로 담지 않고 사용자가 확인 후 담게 함
+   ========================================================= */
+let recognizedCandidates = []; // [{name, on:boolean}]
+
+function showRecognizePreview(names){
+  recognizedCandidates = names.map(name => ({ name, on: true }));
+  renderRecognizePreview();
+  document.getElementById('recognizePreview').style.display = 'block';
+}
+
+function renderRecognizePreview(){
+  const wrap = document.getElementById('rpChips');
+  wrap.innerHTML = '';
+  recognizedCandidates.forEach((item, idx) => {
+    const chip = document.createElement('div');
+    chip.className = 'rp-chip' + (item.on ? '' : ' off');
+    chip.innerHTML = `<span class="mark">${item.on ? '✓' : '✕'}</span><span>${item.name}</span>`;
+    chip.onclick = () => {
+      recognizedCandidates[idx].on = !recognizedCandidates[idx].on;
+      renderRecognizePreview();
+    };
+    wrap.appendChild(chip);
+  });
+
+  const anyOn = recognizedCandidates.some(c => c.on);
+  const confirmBtn = document.getElementById('rpConfirmBtn');
+  confirmBtn.disabled = !anyOn;
+  confirmBtn.style.opacity = anyOn ? '1' : '.5';
+}
+
+function confirmRecognizePreview(){
+  const chosen = recognizedCandidates.filter(c => c.on).map(c => c.name);
+  chosen.forEach(addIngredient);
+
+  const status = document.getElementById('scanStatus');
+  const statusText = document.getElementById('scanStatusText');
+  status.style.display = 'flex';
+  statusText.style.color = 'var(--scallion-deep)';
+  statusText.textContent = chosen.length
+    ? `${chosen.length}가지 재료를 담았어요: ${chosen.join(', ')}`
+    : '담은 재료가 없어요.';
+
+  document.getElementById('recognizePreview').style.display = 'none';
+  recognizedCandidates = [];
+}
+
+function cancelRecognizePreview(){
+  document.getElementById('recognizePreview').style.display = 'none';
+  document.getElementById('photoPreview').style.display = 'none';
+  document.getElementById('scanStatus').style.display = 'none';
+  document.getElementById('photoInput').value = '';
+  recognizedCandidates = [];
+}
+
+/* 이미지(base64 data URL)를 Claude Vision API로 보내 식재료명 배열을 받아옵니다. */
+async function recognizeIngredientsFromImage(dataUrl, mediaType){
+  const base64Data = dataUrl.split(',')[1];
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1000,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: mediaType, data: base64Data }
+            },
+            {
+              type: 'text',
+              text:
+`이 사진 속에 보이는 식재료(냉장고 속 재료, 손질 전/후 식재료, 도시락 반찬 등)를 인식해줘.
+가능하면 아래 재료 목록의 표기와 동일한 이름을 사용하고, 목록에 없는 재료는 가장 자연스러운 한국어 재료명으로 적어줘.
+재료 목록: ${INGREDIENT_DB.join(', ')}
+
+다른 설명이나 마크다운 없이, 인식된 재료명으로만 이루어진 JSON 배열만 응답해줘. 최대 8개까지.
+예시 형식: ["애호박","계란","소시지"]
+재료를 하나도 찾을 수 없으면 빈 배열 []을 응답해줘.`
+            }
+          ]
+        }
+      ]
+    })
+  });
+
+  if(!response.ok){
+    throw new Error(`API 요청 실패: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const textBlock = (data.content || []).find(block => block.type === 'text');
+  if(!textBlock) throw new Error('응답에서 텍스트를 찾을 수 없어요');
+
+  const cleaned = textBlock.text.replace(/```json|```/g, '').trim();
+  let names;
+  try{
+    names = JSON.parse(cleaned);
+  }catch(parseErr){
+    // 모델이 배열 앞뒤에 텍스트를 덧붙인 경우를 대비한 보조 파싱
+    const match = cleaned.match(/\[[\s\S]*\]/);
+    if(!match) throw parseErr;
+    names = JSON.parse(match[0]);
+  }
+
+  if(!Array.isArray(names)) return [];
+
+  // 중복 제거 + 이미 담은 재료 제외 + 문자열만 필터
+  const unique = [...new Set(names.filter(n => typeof n === 'string' && n.trim()).map(n => n.trim()))];
+  return unique.filter(n => !pickedIngredients.includes(n)).slice(0, 8);
+}
 
 /* =========================================================
    화면 3: 재료 분석
